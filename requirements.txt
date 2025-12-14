@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+groq
+langchain-groq
+guardrails-ai
+retry
+python-dotenv
+pymupdf
+pillow
+pytesseract
+jinja2
+pyyaml
+openpyxl

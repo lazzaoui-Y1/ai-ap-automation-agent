@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+# Virtual Environment
+.venv/
+# Environment varaibles
+.env
+.env.local
+# VS Code
+.vscode/
+! .vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+# Data folders
+customers/*/data/
+# Temp files
+*.tmp
+temp_*.pdf
+# Logs
+*.log
