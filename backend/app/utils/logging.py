@@ -33,22 +33,37 @@ class LogColors:
 # Custom Formatter
 # ═══════════════════════════════════════════════════
 
+
 class ColoredFormatter(logging.Formatter):
     """Formatter مع ألوان للـ Console"""
-    
+
     COLORS = {
-        'DEBUG': LogColors.CYAN,
-        'INFO': LogColors.GREEN,
-        'WARNING': LogColors.YELLOW,
-        'ERROR': LogColors.RED,
-        'CRITICAL': LogColors.RED + LogColors.BOLD,
+        "DEBUG": LogColors.CYAN,
+        "INFO": LogColors.GREEN,
+        "WARNING": LogColors.YELLOW,
+        "ERROR": LogColors.RED,
+        "CRITICAL": LogColors.RED + LogColors.BOLD,
     }
-    
-    def format(self, record):
+
+    def format(self, record: logging.LogRecord) -> str:
         log_color = self.COLORS.get(record.levelname, LogColors.WHITE)
-        record.levelname = f"{log_color}{record.levelname}{LogColors.RESET}"
-        record.msg = f"{log_color}{record.msg}{LogColors.RESET}"
-        return super().format(record)
+
+        # حفظ القيم الأصلية
+        original_levelname = record.levelname
+        original_msg = record.msg
+
+        # تطبيق الألوان
+        record.levelname = f"{log_color}{original_levelname}{LogColors.RESET}"
+        record.msg = f"{log_color}{record.getMessage()}{LogColors.RESET}"
+
+        # التنسيق النهائي
+        formatted = super().format(record)
+
+        # إعادة القيم الأصلية (مهم جدًا)
+        record.levelname = original_levelname
+        record.msg = original_msg
+
+        return formatted
 
 
 class JSONFormatter(logging.Formatter):
