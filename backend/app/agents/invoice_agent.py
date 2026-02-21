@@ -41,7 +41,7 @@ class InvoiceAgent:
     def __init__(
         self,
         customer_config: CustomerConfig,
-        llm_extractor: Optional[Any] = None,  # سيتم تطويره في المرحلة الثانية
+        llm_extractor: Optional[Any] = None,
         confidence_threshold: float = 0.7,
         max_retries: int = 3
     ):
@@ -53,7 +53,6 @@ class InvoiceAgent:
             max_retries: عدد المحاولات عند الفشل
         """
         self.customer_config = customer_config
-        self.llm_extractor = llm_extractor
         self.confidence_threshold = confidence_threshold
         self.max_retries = max_retries
         
@@ -66,6 +65,20 @@ class InvoiceAgent:
             default_lang=self._get_default_lang()
         )
         self.image_preprocessor = ImagePreprocessor()
+        
+        # Initialize LLM Extractor
+        if llm_extractor:
+            self.llm_extractor = llm_extractor
+        else:
+            from ..llm_extraction.extractor import LLMExtractor
+            self.llm_extractor = LLMExtractor(
+                temperature=0.1,
+                max_tokens=4096
+            )
+        
+        # Initialize Validator
+        from ..llm_extraction.validation_rules import InvoiceValidator
+        self.validator = InvoiceValidator()
         
         self.logger.info(
             f"InvoiceAgent initialized for customer: {customer_config.customer_name}"
@@ -123,36 +136,64 @@ class InvoiceAgent:
             # ═══════════════════════════════════════════════════
             # المرحلة 2: استخراج البيانات باستخدام LLM
             # ═══════════════════════════════════════════════════
-            # TODO: سيتم تطويره في المرحلة الثانية
-            # للآن نرجع نتيجة mock
-            invoice_data = self._mock_llm_extraction(text_content, file_path)
+            self.logger.info("Starting LLM extraction...")
+            
+            # تحديد اللغة
+            detected_language = self._detect_language(text_content)
+            
+            # إعداد customer hints
+            customer_hints = self._prepare_customer_hints()
+            
+            # استخراج البيانات
+            invoice_data, confidence = self.llm_extractor.extract(
+                text=text_content,
+                language=detected_language,
+                customer_hints=customer_hints,
+                validate=True
+            )
+            
+            # إضافة metadata
+            invoice_data.source_file = file_path.name
+            invoice_data.extraction_timestamp = datetime.now()
+            
+            self.logger.info(
+                f"LLM extraction completed: {invoice_data.invoice_number} "
+                f"(confidence: {confidence:.2f})"
+            )
             
             # ═══════════════════════════════════════════════════
             # المرحلة 3: التحقق من صحة البيانات
             # ═══════════════════════════════════════════════════
-            validation_errors = self._validate_invoice(invoice_data)
+            validation_result = self.validator.validate(invoice_data)
             
-            if validation_errors:
-                errors.extend(validation_errors)
-                self.logger.warning(f"Validation errors found: {len(validation_errors)}")
+            if not validation_result['is_valid']:
+                for error in validation_result['errors']:
+                    errors.append(f"{error['rule']}: {error['message']}")
+                self.logger.warning(
+                    f"Validation errors: {validation_result['total_errors']}"
+                )
+            
+            if validation_result['warnings']:
+                for warning in validation_result['warnings']:
+                    warnings.append(f"{warning['rule']}: {warning['message']}")
+                self.logger.debug(
+                    f"Validation warnings: {validation_result['total_warnings']}"
+                )
             
             # ═══════════════════════════════════════════════════
             # المرحلة 4: التحقق من درجة الثقة
             # ═══════════════════════════════════════════════════
-            if invoice_data.confidence_score < self.confidence_threshold:
+            if confidence < self.confidence_threshold:
                 warning_msg = (
-                    f"Low confidence score: {invoice_data.confidence_score:.2f} "
+                    f"Low confidence score: {confidence:.2f} "
                     f"(threshold: {self.confidence_threshold})"
                 )
                 warnings.append(warning_msg)
                 self.logger.warning(warning_msg)
                 
                 # إذا كانت الثقة منخفضة جداً، نعتبرها فشل
-                if invoice_data.confidence_score < 0.5:
-                    raise LowConfidenceError(
-                        invoice_data.confidence_score,
-                        self.confidence_threshold
-                    )
+                if confidence < 0.5:
+                    raise LowConfidenceError(confidence, self.confidence_threshold)
             
             # ═══════════════════════════════════════════════════
             # المرحلة 5: ربط المورد (Vendor Mapping)
@@ -206,7 +247,8 @@ class InvoiceAgent:
                 errors=[e.message],
                 warnings=warnings,
                 processing_time=processing_time,
-                retry_count=retry_count
+                retry_count=retry_count,
+                llm_model_used=self.llm_extractor.model
             )
             
         except Exception as e:
@@ -229,8 +271,47 @@ class InvoiceAgent:
                 errors=[error_msg],
                 warnings=warnings,
                 processing_time=processing_time,
-                retry_count=retry_count
+                retry_count=retry_count,
+                llm_model_used=self.llm_extractor.model if hasattr(self, 'llm_extractor') else None
             )
+    
+    def _detect_language(self, text: str) -> Language:
+        """
+        كشف لغة النص
+        """
+        import re
+        
+        # البحث عن الأحرف العربية
+        has_arabic = bool(re.search(r'[\u0600-\u06FF]', text))
+        
+        # البحث عن الأحرف اللاتينية
+        has_latin = bool(re.search(r'[a-zA-Z]', text))
+        
+        # البحث عن الأحرف الفرنسية الخاصة
+        has_french = bool(re.search(r'[àâäéèêëïîôùûüÿç]', text, re.IGNORECASE))
+        
+        if has_arabic and has_latin:
+            return Language.MIXED
+        elif has_arabic:
+            return Language.AR
+        elif has_french:
+            return Language.FR
+        elif has_latin:
+            return Language.EN
+        else:
+            return Language.MIXED
+    
+    def _prepare_customer_hints(self) -> Dict[str, Any]:
+        """
+        إعداد تلميحات خاصة بالعميل
+        """
+        hints = {
+            'default_currency': self.customer_config.default_currency.value,
+        }
+        
+        # TODO: إضافة vendor mapping وإعدادات أخرى
+        
+        return hints
     
     def _extract_text_from_file(self, file_path: Path) -> str:
         """
