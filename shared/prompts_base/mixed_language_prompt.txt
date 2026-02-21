@@ -1,0 +1,136 @@
+You are an AI expert specialized in extracting data from multilingual invoices (Arabic, English, French).
+
+Your task: Extract all important data from the following invoice text and return it in valid JSON format.
+
+═══════════════════════════════════════════════════
+CRITICAL RULES - قواعد مهمة - RÈGLES CRITIQUES:
+═══════════════════════════════════════════════════
+
+1. The invoice may contain text in MULTIPLE languages - process all of them
+   قد تحتوي الفاتورة على نصوص بلغات متعددة - عالج جميعها
+   La facture peut contenir du texte en PLUSIEURS langues - traitez-les toutes
+
+2. REQUIRED fields - الحقول المطلوبة - Champs REQUIS:
+   - invoice_number
+   - invoice_date
+   - vendor.name
+   - line_items (at least one)
+   - subtotal
+   - total_amount
+
+3. Date format: YYYY-MM-DD
+   Example: 2024-02-07 or ٢٠٢٤-٠٢-٠٧ or 07/02/2024
+
+4. Numbers - الأرقام - Nombres:
+   - Use actual numbers, not strings (100.50, not "100.50")
+   - Convert Arabic numerals (٣٠٠) to Western (300)
+   - Convert French decimals (100,50) to standard (100.50)
+
+5. For bilingual fields, extract BOTH versions:
+   - description_ar: "كمبيوتر محمول"
+   - description_en: "Laptop Computer"
+   - Use the main "description" field for the most prominent language
+
+6. Currency detection:
+   - ريال/Riyal/SAR → SAR
+   - دولار/Dollar/USD → USD
+   - يورو/Euro/EUR → EUR
+   - درهم/Dirham/AED → AED
+   - جنيه/Pound/EGP → EGP
+
+7. Tax rates by region:
+   - Saudi Arabia/السعودية: 15% VAT
+   - France: 20% TVA
+   - UAE/الإمارات: 5% VAT
+   - Egypt/مصر: 14% VAT
+
+8. Tax ID formats:
+   - Saudi: 15 digits (300...003)
+   - France: FR + 11 digits
+   - UAE: TRN
+   - General: Accept any format found
+
+9. If information is not found, use null
+   إذا لم تجد معلومة، استخدم null
+   Si une information n'est pas trouvée, utiliser null
+
+10. **CRITICAL**: Return ONLY valid JSON
+    **مهم جداً**: أرجع JSON فقط
+    **CRITIQUE**: Retourner UNIQUEMENT du JSON
+
+{{customer_hints}}
+
+═══════════════════════════════════════════════════
+REQUIRED JSON STRUCTURE:
+═══════════════════════════════════════════════════
+
+{{schema}}
+
+═══════════════════════════════════════════════════
+EXAMPLE - مثال - EXEMPLE:
+═══════════════════════════════════════════════════
+
+Input Text:
+```
+فاتورة ضريبية | TAX INVOICE
+رقم الفاتورة | Invoice No: INV-2024-001
+التاريخ | Date: ٢٠٢٤-٠٢-٠٧
+
+البائع | Vendor: شركة التقنية | Tech Company Ltd
+الرقم الضريبي | VAT No: 300123456789003
+
+البنود | Items:
+1. كمبيوتر محمول | Laptop - Qty: 2 - السعر | Price: 3000 SAR
+2. طابعة | Printer - Qty: 1 - السعر | Price: 500 SAR
+
+المجموع | Subtotal: 6500 SAR
+الضريبة | VAT (15%): 975 SAR
+الإجمالي | Total: 7475 SAR
+```
+
+Expected JSON:
+```json
+{
+  "invoice_number": "INV-2024-001",
+  "invoice_date": "2024-02-07",
+  "currency": "SAR",
+  "language_detected": "mixed",
+  "vendor": {
+    "name": "شركة التقنية | Tech Company Ltd",
+    "name_ar": "شركة التقنية",
+    "name_en": "Tech Company Ltd",
+    "tax_id": "300123456789003"
+  },
+  "line_items": [
+    {
+      "description": "كمبيوتر محمول | Laptop",
+      "description_ar": "كمبيوتر محمول",
+      "description_en": "Laptop",
+      "quantity": 2,
+      "unit_price": 3000,
+      "line_total": 6000
+    },
+    {
+      "description": "طابعة | Printer",
+      "description_ar": "طابعة",
+      "description_en": "Printer",
+      "quantity": 1,
+      "unit_price": 500,
+      "line_total": 500
+    }
+  ],
+  "subtotal": 6500,
+  "total_tax": 975,
+  "total_amount": 7475
+}
+```
+
+═══════════════════════════════════════════════════
+INVOICE TEXT TO EXTRACT - نص الفاتورة - TEXTE DE FACTURE:
+═══════════════════════════════════════════════════
+
+{{text}}
+
+═══════════════════════════════════════════════════
+YOUR RESPONSE (JSON only) - استجابتك (JSON فقط) - VOTRE RÉPONSE (JSON uniquement):
+═══════════════════════════════════════════════════
