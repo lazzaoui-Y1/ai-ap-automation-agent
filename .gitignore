@@ -28,3 +28,6 @@ customers/*/data/
 temp_*.pdf
 # Logs
 *.log
+.env
+.env.*
+!.env.example
