@@ -3,9 +3,10 @@ backend/app/main.py
 نقطة البداية - FastAPI Application
 """
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from pathlib import Path
 from typing import List, Optional
 import shutil
@@ -24,6 +25,29 @@ from .utils.exceptions import (
     CustomerNotFoundError
 )
 from .utils.logging import app_logger, log_invoice_processing
+from .utils.security import (
+    get_current_user,
+    TokenData,
+    PermissionChecker,
+    Permission,
+    verify_customer_access,
+    create_user_tokens,
+    hash_password,
+    verify_password,
+    UserRole
+)
+from .utils.rate_limit import (
+    limiter,
+    custom_rate_limit_exceeded_handler,
+    RateLimitConfig,
+    get_user_key
+)
+from .utils.file_security import (
+    SecureFileHandler,
+    validate_file_upload,
+    MAX_FILE_SIZE
+)
+from .utils.pii_masking import mask_invoice_for_logging
 
 
 # ═══════════════════════════════════════════════════
@@ -37,6 +61,10 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# Rate Limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, custom_rate_limit_exceeded_handler)
 
 # CORS Middleware
 app.add_middleware(
@@ -111,22 +139,31 @@ async def health_check():
 
 
 # ═══════════════════════════════════════════════════
-# Invoice Processing Endpoints
+# Invoice Processing Endpoints (SECURED)
 # ═══════════════════════════════════════════════════
 
 @app.post("/api/v1/invoices/process/{customer_id}", 
           response_model=ExtractionResult,
           tags=["Invoice Processing"])
+@limiter.limit(RateLimitConfig.INVOICE_PROCESS, key_func=get_user_key)
 async def process_invoice(
+    request: Request,
     customer_id: str,
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None,
+    user: TokenData = Depends(verify_customer_access)
 ):
     """
-    معالجة فاتورة واحدة
+    معالجة فاتورة واحدة (محمي بـ JWT + Rate Limiting)
     
     - **customer_id**: معرف العميل
     - **file**: ملف الفاتورة (PDF أو صورة)
+    
+    Security:
+        - يتطلب JWT token
+        - Rate limit: 20 requests/minute
+        - Max file size: 50MB
+        - Customer isolation enforced
     
     Returns:
         نتيجة الاستخراج مع بيانات الفاتورة
@@ -134,48 +171,58 @@ async def process_invoice(
     temp_file_path = None
     
     try:
-        app_logger.info(f"Received invoice for customer: {customer_id}")
+        app_logger.info(
+            f"Received invoice for customer: {customer_id} "
+            f"from user: {user.username}"
+        )
         
-        # التحقق من نوع الملف
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No filename provided")
+        # ═══════════════════════════════════════════════════
+        # Security: File Validation
+        # ═══════════════════════════════════════════════════
+        is_valid, error = await validate_file_upload(file, max_size=MAX_FILE_SIZE)
         
-        file_ext = Path(file.filename).suffix.lower()
-        supported_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+        if not is_valid:
+            app_logger.warning(f"File validation failed: {error}")
+            raise HTTPException(status_code=400, detail=error)
         
-        if file_ext not in supported_extensions:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type: {file_ext}. Supported: {supported_extensions}"
-            )
-        
-        # حفظ الملف مؤقتاً
+        # ═══════════════════════════════════════════════════
+        # Security: Secure File Saving with UUID
+        # ═══════════════════════════════════════════════════
         temp_dir = Path("./temp")
         temp_dir.mkdir(exist_ok=True)
         
-        temp_file_path = temp_dir / f"{customer_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+        file_handler = SecureFileHandler(temp_dir)
+        temp_file_path, original_filename = await file_handler.save_upload_file(
+            file=file,
+            customer_id=customer_id,
+            use_uuid=True,
+            prefix="inv"
+        )
         
-        with temp_file_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        app_logger.info(f"File saved securely: {original_filename} -> {temp_file_path.name}")
         
-        app_logger.info(f"File saved temporarily: {temp_file_path.name}")
-        
-        # إنشاء Agent للعميل
-        # TODO: قراءة الإعدادات الحقيقية من config.yaml
+        # ═══════════════════════════════════════════════════
+        # Processing
+        # ═══════════════════════════════════════════════════
         agent = create_agent_for_customer(customer_id)
-        
-        # معالجة الفاتورة
         result = agent.process_invoice(temp_file_path)
         
-        # حفظ الفاتورة في مجلد العميل إذا نجحت
+        # ═══════════════════════════════════════════════════
+        # Security: PII Masking for Logs
+        # ═══════════════════════════════════════════════════
         if result.success and result.invoice:
+            safe_invoice_data = mask_invoice_for_logging(result.invoice.dict())
+            app_logger.info(
+                f"Invoice processed successfully: {safe_invoice_data['invoice_number']} "
+                f"(confidence: {safe_invoice_data['confidence_score']:.2%})"
+            )
+            
+            # حفظ الفاتورة في مجلد العميل
             customer_data_dir = Path(f"./customers/{customer_id}/data/processed")
             customer_data_dir.mkdir(parents=True, exist_ok=True)
             
-            final_path = customer_data_dir / file.filename
+            final_path = customer_data_dir / temp_file_path.name
             shutil.copy(temp_file_path, final_path)
-            
-            app_logger.info(f"Invoice saved to customer directory: {final_path}")
         
         return result
         
