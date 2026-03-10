@@ -12,6 +12,7 @@ click==8.2.0
 decorator==5.2.1
 diff-match-patch==20241021
 distro==1.9.0
+ecdsa==0.19.1
 et_xmlfile==2.0.0
 Faker==37.12.0
 fastapi==0.129.0
@@ -75,6 +76,7 @@ pillow==12.1.1
 propcache==0.4.1
 protobuf==6.33.5
 py==1.11.0
+pyasn1==0.6.2
 pydantic==2.12.5
 pydantic-settings==2.12.0
 pydantic_core==2.41.5
@@ -85,6 +87,7 @@ PyMuPDF==1.27.1
 pytesseract==0.3.13
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
+python-jose==3.5.0
 PyYAML==6.0.3
 referencing==0.37.0
 regex==2026.1.15
@@ -96,6 +99,7 @@ rfc3986-validator==0.1.1
 rfc3987-syntax==1.1.0
 rich==14.3.2
 rpds-py==0.30.0
+rsa==4.9.1
 rstr==3.2.2
 semver==3.0.4
 shellingham==1.5.4
